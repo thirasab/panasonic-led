@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panasonic AC Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: #f0f2f5; padding: 20px; }
+        .card { background: white; max-width: 380px; margin: 0 auto; padding: 25px; border-radius: 16px; box-shadow: 0 8px 20px rgba(0,0,0,0.08); }
+        .btn { width: 100%; padding: 12px; margin: 8px 0; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        .btn-on { background-color: #2e7d32; color: white; }
+        .btn-off { background-color: #c62828; color: white; }
+        .btn-action { background-color: #0288d1; color: white; }
+        .btn:active { transform: scale(0.98); }
+        #status { font-size: 14px; font-weight: bold; margin-bottom: 5px; color: #757575; }
+        #ack-status { font-size: 13px; margin-bottom: 20px; color: #0288d1; font-weight: bold; }
+        select, input[type=range] { width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box; }
+        .temp-display { font-size: 28px; font-weight: bold; color: #0288d1; margin: 10px 0; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>ควบคุมแอร์ Panasonic</h2>
+    <div id="status">MQTT: กำลังเชื่อมต่อ...</div>
+    <div id="ack-status">สถานะแอร์: รอข้อมูลจาก ESP32</div>
+
+    <button class="btn btn-on" onclick="sendCmd('ON')">เปิดแอร์ (ON)</button>
+    <button class="btn btn-off" onclick="sendCmd('OFF')">ปิดแอร์ (OFF)</button>
+    
+    <hr style="margin: 20px 0; border: 0.5px solid #eee;">
+    
+    <h3>ตั้งอุณหภูมิ</h3>
+    <div class="temp-display"><span id="tempValue">25</span> °C</div>
+    <input type="range" id="tempRange" min="16" max="30" value="25" oninput="document.getElementById('tempValue').innerText = this.value">
+    <button class="btn btn-action" onclick="sendTemp()">ปรับอุณหภูมิ</button>
+
+    <hr style="margin: 20px 0; border: 0.5px solid #eee;">
+
+    <h3>ตั้งเวลาปิด (Off Timer)</h3>
+    <select id="timerOffSelect">
+        <option value="0">ยกเลิกตั้งเวลาปิด</option>
+        <option value="0.5">30 นาที</option>
+        <option value="1">1 ชั่วโมง</option>
+        <option value="2">2 ชั่วโมง</option>
+        <option value="4">4 ชั่วโมง</option>
+        <option value="8">8 ชั่วโมง</option>
+    </select>
+    <button class="btn btn-action" onclick="sendTimerOff()">บันทึกเวลาปิด</button>
+</div>
+
+<script>
+    // --- HiveMQ Cloud Config ---
+    const broker = "4d79d42984154e37aab32ca068370f40.s1.eu.hivemq.cloud";
+    const port = 8884; // พอร์ต WSS
+    const username = "esp32_user2";
+    const password = "Mcl19508";
+
+    const topicSet = "home/ac/panasonic/set";
+    const topicState = "home/ac/panasonic/state";
+    const clientID = "web_client_" + Math.random().toString(16).substr(2, 8);
+
+    const client = new Paho.MQTT.Client(broker, port, clientID);
+
+    client.onConnectionLost = function (responseObject) {
+        document.getElementById("status").innerText = "MQTT: หลุดการเชื่อมต่อ";
+        document.getElementById("status").style.color = "red";
+    };
+
+    client.onMessageArrived = function (message) {
+        const payload = message.payloadString;
+        const ackBox = document.getElementById("ack-status");
+        
+        if (payload === "ON_OK") {
+            ackBox.innerText = "สถานะ: ESP32 สั่งเปิดแอร์เรียบร้อย!";
+            ackBox.style.color = "green";
+        } else if (payload === "OFF_OK") {
+            ackBox.innerText = "สถานะ: ESP32 สั่งปิดแอร์เรียบร้อย!";
+            ackBox.style.color = "red";
+        } else if (payload.startsWith("TEMP_OK:")) {
+            const temp = payload.split(":")[1];
+            ackBox.innerText = "สถานะ: ปรับอุณหภูมิเป็น " + temp + "°C สำเร็จ!";
+            ackBox.style.color = "#0288d1";
+        } else if (payload.startsWith("TIMER_OFF_SET:")) {
+            const hrs = payload.split(":")[1];
+            ackBox.innerText = "สถานะ: ตั้งเวลาปิดแอร์ในอีก " + hrs + " ชม. สำเร็จ!";
+            ackBox.style.color = "orange";
+        } else if (payload === "TIMER_OFF_TRIGGERED") {
+            ackBox.innerText = "สถานะ: ปิดแอร์ตามเวลาที่ตั้งไว้แล้ว";
+            ackBox.style.color = "red";
+        } else if (payload === "ESP32_ONLINE") {
+            ackBox.innerText = "สถานะ: ESP32 ออนไลน์พร้อมใช้งาน";
+            ackBox.style.color = "green";
+        }
+    };
+
+    client.connect({
+        useSSL: true,
+        userName: username,
+        password: password,
+        onSuccess: function () {
+            document.getElementById("status").innerText = "MQTT: เชื่อมต่อ HiveMQ สำเร็จ";
+            document.getElementById("status").style.color = "green";
+            client.subscribe(topicState);
+        },
+        onFailure: function (e) {
+            document.getElementById("status").innerText = "MQTT: ล้มเหลว (" + e.errorMessage + ")";
+            document.getElementById("status").style.color = "red";
+        }
+    });
+
+    function sendCmd(payload) {
+        if (client.isConnected()) {
+            const message = new Paho.MQTT.Message(payload);
+            message.destinationName = topicSet;
+            client.send(message);
+            document.getElementById("ack-status").innerText = "กำลังส่งคำสั่ง...";
+            document.getElementById("ack-status").style.color = "gray";
+        } else {
+            alert("ยังไม่ได้เชื่อมต่อ MQTT Broker");
+        }
+    }
+
+    function sendTemp() {
+        const val = document.getElementById("tempRange").value;
+        sendCmd("TEMP:" + val);
+    }
+
+    function sendTimerOff() {
+        const val = document.getElementById("timerOffSelect").value;
+        sendCmd("TIMER_OFF:" + val);
+    }
+</script>
+
+</body>
+</html>
