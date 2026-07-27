@@ -6,17 +6,42 @@
     <title>Panasonic AC Dashboard</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: #f0f2f5; padding: 20px; }
-        .card { background: white; max-width: 380px; margin: 0 auto; padding: 25px; border-radius: 16px; box-shadow: 0 8px 20px rgba(0,0,0,0.08); }
-        .btn { width: 100%; padding: 12px; margin: 8px 0; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            text-align: center; 
+            background: #f0f2f5; 
+            padding: 20px; 
+            margin: 0;
+        }
+        .card { 
+            background: white; 
+            max-width: 380px; 
+            margin: 0 auto; 
+            padding: 25px; 
+            border-radius: 16px; 
+            box-shadow: 0 8px 20px rgba(0,0,0,0.08); 
+        }
+        .btn { 
+            width: 100%; 
+            padding: 12px; 
+            margin: 8px 0; 
+            border: none; 
+            border-radius: 8px; 
+            font-size: 16px; 
+            font-weight: bold; 
+            cursor: pointer; 
+            transition: 0.2s; 
+        }
         .btn-on { background-color: #2e7d32; color: white; }
         .btn-off { background-color: #c62828; color: white; }
         .btn-action { background-color: #0288d1; color: white; }
         .btn:active { transform: scale(0.98); }
         #status { font-size: 14px; font-weight: bold; margin-bottom: 5px; color: #757575; }
-        #ack-status { font-size: 13px; margin-bottom: 20px; color: #0288d1; font-weight: bold; }
+        #ack-status { font-size: 13px; margin-bottom: 20px; color: #0288d1; font-weight: bold; min-height: 18px; }
         select, input[type=range] { width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box; }
         .temp-display { font-size: 28px; font-weight: bold; color: #0288d1; margin: 10px 0; }
+        hr { margin: 20px 0; border: 0; border-top: 1px solid #eee; }
+        h3 { margin-top: 10px; margin-bottom: 10px; font-size: 16px; color: #333; }
     </style>
 </head>
 <body>
@@ -29,14 +54,27 @@
     <button class="btn btn-on" onclick="sendCmd('ON')">เปิดแอร์ (ON)</button>
     <button class="btn btn-off" onclick="sendCmd('OFF')">ปิดแอร์ (OFF)</button>
     
-    <hr style="margin: 20px 0; border: 0.5px solid #eee;">
+    <hr>
     
     <h3>ตั้งอุณหภูมิ</h3>
     <div class="temp-display"><span id="tempValue">25</span> °C</div>
     <input type="range" id="tempRange" min="16" max="30" value="25" oninput="document.getElementById('tempValue').innerText = this.value">
     <button class="btn btn-action" onclick="sendTemp()">ปรับอุณหภูมิ</button>
 
-    <hr style="margin: 20px 0; border: 0.5px solid #eee;">
+    <hr>
+
+    <h3>ตั้งเวลาเปิด (On Timer)</h3>
+    <select id="timerOnSelect">
+        <option value="0">ยกเลิกตั้งเวลาเปิด</option>
+        <option value="0.5">30 นาที</option>
+        <option value="1">1 ชั่วโมง</option>
+        <option value="2">2 ชั่วโมง</option>
+        <option value="4">4 ชั่วโมง</option>
+        <option value="8">8 ชั่วโมง</option>
+    </select>
+    <button class="btn btn-action" onclick="sendTimerOn()">บันทึกเวลาเปิด</button>
+
+    <hr>
 
     <h3>ตั้งเวลาปิด (Off Timer)</h3>
     <select id="timerOffSelect">
@@ -53,7 +91,7 @@
 <script>
     // --- HiveMQ Cloud Config ---
     const broker = "4d79d42984154e37aab32ca068370f40.s1.eu.hivemq.cloud";
-    const port = 8884; // พอร์ต WSS
+    const port = 8884; // พอร์ต WSS (WebSocket Secure)
     const username = "AirPanasonic";
     const password = "Mcl195088";
 
@@ -63,11 +101,14 @@
 
     const client = new Paho.MQTT.Client(broker, port, clientID);
 
+    // เมื่อการเชื่อมต่อหลุด
     client.onConnectionLost = function (responseObject) {
-        document.getElementById("status").innerText = "MQTT: หลุดการเชื่อมต่อ";
-        document.getElementById("status").style.color = "red";
+        const statusBox = document.getElementById("status");
+        statusBox.innerText = "MQTT: หลุดการเชื่อมต่อ";
+        statusBox.style.color = "red";
     };
 
+    // เมื่อมีข้อความตอบกลับมาจาก ESP32
     client.onMessageArrived = function (message) {
         const payload = message.payloadString;
         const ackBox = document.getElementById("ack-status");
@@ -82,6 +123,16 @@
             const temp = payload.split(":")[1];
             ackBox.innerText = "สถานะ: ปรับอุณหภูมิเป็น " + temp + "°C สำเร็จ!";
             ackBox.style.color = "#0288d1";
+        } else if (payload.startsWith("TIMER_ON_SET:")) {
+            const hrs = payload.split(":")[1];
+            ackBox.innerText = "สถานะ: ตั้งเวลาเปิดแอร์ในอีก " + hrs + " ชม. สำเร็จ!";
+            ackBox.style.color = "#2e7d32";
+        } else if (payload === "TIMER_ON_TRIGGERED") {
+            ackBox.innerText = "สถานะ: เปิดแอร์ตามเวลาที่ตั้งไว้แล้ว";
+            ackBox.style.color = "green";
+        } else if (payload === "TIMER_ON_CANCEL") {
+            ackBox.innerText = "สถานะ: ยกเลิกการตั้งเวลาเปิดเรียบร้อย";
+            ackBox.style.color = "gray";
         } else if (payload.startsWith("TIMER_OFF_SET:")) {
             const hrs = payload.split(":")[1];
             ackBox.innerText = "สถานะ: ตั้งเวลาปิดแอร์ในอีก " + hrs + " ชม. สำเร็จ!";
@@ -89,44 +140,61 @@
         } else if (payload === "TIMER_OFF_TRIGGERED") {
             ackBox.innerText = "สถานะ: ปิดแอร์ตามเวลาที่ตั้งไว้แล้ว";
             ackBox.style.color = "red";
+        } else if (payload === "TIMER_OFF_CANCEL") {
+            ackBox.innerText = "สถานะ: ยกเลิกการตั้งเวลาปิดเรียบร้อย";
+            ackBox.style.color = "gray";
         } else if (payload === "ESP32_ONLINE") {
             ackBox.innerText = "สถานะ: ESP32 ออนไลน์พร้อมใช้งาน";
             ackBox.style.color = "green";
         }
     };
 
+    // เชื่อมต่อ MQTT Broker
     client.connect({
         useSSL: true,
         userName: username,
         password: password,
         onSuccess: function () {
-            document.getElementById("status").innerText = "MQTT: เชื่อมต่อ HiveMQ สำเร็จ";
-            document.getElementById("status").style.color = "green";
+            const statusBox = document.getElementById("status");
+            statusBox.innerText = "MQTT: เชื่อมต่อ HiveMQ สำเร็จ";
+            statusBox.style.color = "green";
             client.subscribe(topicState);
         },
         onFailure: function (e) {
-            document.getElementById("status").innerText = "MQTT: ล้มเหลว (" + e.errorMessage + ")";
-            document.getElementById("status").style.color = "red";
+            const statusBox = document.getElementById("status");
+            statusBox.innerText = "MQTT: ล้มเหลว (" + e.errorMessage + ")";
+            statusBox.style.color = "red";
         }
     });
 
+    // ฟังก์ชันส่งคำสั่งพื้นฐาน
     function sendCmd(payload) {
         if (client.isConnected()) {
             const message = new Paho.MQTT.Message(payload);
             message.destinationName = topicSet;
             client.send(message);
-            document.getElementById("ack-status").innerText = "กำลังส่งคำสั่ง...";
-            document.getElementById("ack-status").style.color = "gray";
+            
+            const ackBox = document.getElementById("ack-status");
+            ackBox.innerText = "กำลังส่งคำสั่ง...";
+            ackBox.style.color = "gray";
         } else {
             alert("ยังไม่ได้เชื่อมต่อ MQTT Broker");
         }
     }
 
+    // ส่งคำสั่งปรับอุณหภูมิ
     function sendTemp() {
         const val = document.getElementById("tempRange").value;
         sendCmd("TEMP:" + val);
     }
 
+    // ส่งคำสั่งตั้งเวลาเปิด
+    function sendTimerOn() {
+        const val = document.getElementById("timerOnSelect").value;
+        sendCmd("TIMER_ON:" + val);
+    }
+
+    // ส่งคำสั่งตั้งเวลาปิด
     function sendTimerOff() {
         const val = document.getElementById("timerOffSelect").value;
         sendCmd("TIMER_OFF:" + val);
